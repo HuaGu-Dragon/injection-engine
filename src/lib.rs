@@ -1,10 +1,9 @@
 #![allow(non_snake_case)]
 use std::any::Any;
-use std::sync::Arc;
 
 use std::collections::HashMap;
 pub trait Handler<R, P> {
-    fn call(self, param: R);
+    fn call(self, param: &R);
 }
 
 pub trait FromParams<T> {
@@ -38,19 +37,18 @@ impl EngineBuilder {
     }
 
     pub fn build(self) -> Engine {
-        let state = Arc::new(EngineState { data: self.data });
+        let state = EngineState { data: self.data };
         Engine { state }
     }
 }
 
-#[derive(Clone)]
 pub struct Engine {
-    state: Arc<EngineState>,
+    state: EngineState,
 }
 
 impl Engine {
-    pub fn run<P>(self, f: impl Handler<Arc<EngineState>, P>) -> Self {
-        f.call(self.state.clone());
+    pub fn run<P>(self, f: impl Handler<EngineState, P>) -> Self {
+        f.call(&self.state);
         self
     }
 }
@@ -88,13 +86,12 @@ macro_rules! impl_handler {
         impl<F, R, $($ty,)* $last> Handler<R, ($($ty,)* $last,)> for F
         where
             F: FnOnce($(&$ty, )* &$last),
-            R: Clone,
             $($ty: FromParams<R>,)*
             $last: FromParams<R>,
         {
-            fn call(self, req: R) {
-                $(let $ty = FromParams::extract(&req);)*
-                let $last = FromParams::extract(&req);
+            fn call(self, req: &R) {
+                $(let $ty = FromParams::extract(req);)*
+                let $last = FromParams::extract(req);
                 (self)($($ty,)* $last,);
             }
         }
@@ -103,8 +100,8 @@ macro_rules! impl_handler {
 
 all_tuples!(impl_handler);
 
-impl<T: 'static> FromParams<Arc<EngineState>> for T {
-    fn extract(req: &Arc<EngineState>) -> &Self {
+impl<T: 'static> FromParams<EngineState> for T {
+    fn extract(req: &EngineState) -> &Self {
         let type_name = std::any::type_name::<Self>();
         let boxed = req.data.map.get(type_name).unwrap_or_else(|| panic!("Type {type_name} not found in EngineState. Make sure to register it using EngineBuilder::with()."));
 
