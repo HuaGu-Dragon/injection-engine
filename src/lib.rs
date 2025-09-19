@@ -49,8 +49,9 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn run<P>(self, f: impl Handler<Arc<EngineState>, P>) {
+    pub fn run<P>(self, f: impl Handler<Arc<EngineState>, P>) -> Self {
         f.call(self.state.clone());
+        self
     }
 }
 
@@ -102,21 +103,13 @@ macro_rules! impl_handler {
 
 all_tuples!(impl_handler);
 
-macro_rules! impl_params {
-    ($($ty:ident),*) => {
-        $(
-            impl FromParams<Arc<EngineState>> for $ty {
-                fn extract(req: &Arc<EngineState>) -> &Self {
-                    let type_name = std::any::type_name::<Self>();
-                    let boxed = req.data.map.get(type_name).expect(&format!("Type {} not found in EngineState. Make sure to register it using EngineBuilder::with().", type_name));
-                    let value = boxed.downcast_ref::<Self>().expect(&format!("Type {} found in EngineState but failed to downcast.", type_name));
-                    value
-                }
-            }
-        )*
-    };
-}
+impl<T: 'static> FromParams<Arc<EngineState>> for T {
+    fn extract(req: &Arc<EngineState>) -> &Self {
+        let type_name = std::any::type_name::<Self>();
+        let boxed = req.data.map.get(type_name).unwrap_or_else(|| panic!("Type {type_name} not found in EngineState. Make sure to register it using EngineBuilder::with()."));
 
-impl_params!(
-    i8, u8, i16, u16, i32, u32, i64, u64, isize, usize, f32, f64, bool, char, String
-);
+        boxed.downcast_ref::<Self>().unwrap_or_else(|| {
+            panic!("Type {type_name} found in EngineState but failed to downcast.")
+        })
+    }
+}

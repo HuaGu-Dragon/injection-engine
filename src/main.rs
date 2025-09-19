@@ -3,10 +3,14 @@ fn main() {
         println!("and {i}");
     }
 
-    let engine = injection_engine::EngineBuilder::default()
+    fn handler2(i: &i32, u: &u8) {
+        println!("injection engine says {i} and {u}");
+    }
+
+    injection_engine::EngineBuilder::default()
         .with_state(42i32)
         .with_state(7u8)
-        .build();
-
-    engine.run(handler);
+        .build()
+        .run(handler)
+        .run(handler2);
 }
