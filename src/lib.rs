@@ -1,4 +1,5 @@
 #![allow(non_snake_case)]
+use std::any::Any;
 use std::sync::Arc;
 
 use std::collections::HashMap;
@@ -7,16 +8,12 @@ pub trait Handler<R, P> {
 }
 
 pub trait FromParams<T> {
-    fn extract(req: &T) -> Self;
-}
-
-pub trait FromParamsOwn<T> {
-    fn extract(req: T) -> Self;
+    fn extract(req: &T) -> &Self;
 }
 
 #[derive(Default)]
 pub struct TypeSet {
-    map: HashMap<String, Box<dyn std::any::Any>>,
+    map: HashMap<String, Box<dyn Any + Send + Sync>>,
 }
 
 pub struct EngineState {
@@ -33,15 +30,16 @@ impl EngineBuilder {
         Self::default()
     }
 
-    pub fn with<T: 'static + Send + Sync>(mut self, val: T) -> Self {
+    pub fn with_state<T: 'static + Send + Sync>(mut self, val: T) -> Self {
         self.data
             .map
             .insert(std::any::type_name::<T>().to_string(), Box::new(val));
         self
     }
 
-    pub fn build(self) -> Arc<EngineState> {
-        Arc::new(EngineState { data: self.data })
+    pub fn build(self) -> Engine {
+        let state = Arc::new(EngineState { data: self.data });
+        Engine { state }
     }
 }
 
@@ -88,13 +86,14 @@ macro_rules! impl_handler {
     ) => {
         impl<F, R, $($ty,)* $last> Handler<R, ($($ty,)* $last,)> for F
         where
-            F: FnOnce($($ty, )* $last),
+            F: FnOnce($(&$ty, )* &$last),
+            R: Clone,
             $($ty: FromParams<R>,)*
-            $last: FromParamsOwn<R>,
+            $last: FromParams<R>,
         {
             fn call(self, req: R) {
                 $(let $ty = FromParams::extract(&req);)*
-                let $last = FromParamsOwn::extract(req);
+                let $last = FromParams::extract(&req);
                 (self)($($ty,)* $last,);
             }
         }
@@ -106,9 +105,12 @@ all_tuples!(impl_handler);
 macro_rules! impl_params {
     ($($ty:ident),*) => {
         $(
-            impl FromParamsOwn<Arc<EngineState>> for $ty {
-                fn extract(req: Arc<EngineState>) -> Self {
-                    todo!()
+            impl FromParams<Arc<EngineState>> for $ty {
+                fn extract(req: &Arc<EngineState>) -> &Self {
+                    let type_name = std::any::type_name::<Self>();
+                    let boxed = req.data.map.get(type_name).expect(&format!("Type {} not found in EngineState. Make sure to register it using EngineBuilder::with().", type_name));
+                    let value = boxed.downcast_ref::<Self>().expect(&format!("Type {} found in EngineState but failed to downcast.", type_name));
+                    value
                 }
             }
         )*
